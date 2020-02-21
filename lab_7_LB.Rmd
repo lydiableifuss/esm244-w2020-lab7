@@ -1,0 +1,194 @@
+---
+title: "Lab 7 Lydia"
+author: "Lydia Bleifuss"
+date: "2/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                        warning = FALSE)
+```
+
+### Attach packages:
+```{r}
+#Cleaning
+library(tidyverse)
+library(here)
+library(janitor)
+library(plotly)
+
+#Spatial
+library(tmap)
+library(sf)
+library(maptools)
+library(sp)
+library(spatstat)
+library(raster)
+
+#Cluster Analysis 
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+```
+
+### Get data
+
+Red tree voles in Humbolt County 
+
+```{r}
+voles <- read_sf(dsn = here("data", "redtreevoledata"), #dsn is asking "what folder is this in?"
+                 layer = "ds033") %>% 
+  dplyr::select(COUNTY) %>%  #many other packages have a select package 
+  dplyr::filter(COUNTY == "HUM") %>%  #just humboldt county 
+  st_transform(crs = 4326) #already has projection assigned so need to TRANSFORM rather than assign 
+
+# st_crs(voles) #use this to check the crs 
+
+plot(voles) #great, but now we want some sort of border window so we can figure out where this is
+
+## Read in data for Humboldt County:
+
+humboldt <- read_sf(dsn = here("data", "redtreevoledata"),
+                    layer = "california_county_shape_file",
+                    crs = 4326) %>% #assinging or transforming the crs works here always, but sometimes nice to do what is done above so you are actively looking and changing the crs
+  dplyr::filter(NAME == "Humboldt") %>% 
+  dplyr::select(NAME) #we could keep the others but gets confusing for mapping
+
+  
+#st_crs(humboldt)
+
+
+plot(humboldt)
+
+tm_shape(humboldt) +
+  tm_fill() + 
+  tm_borders() +#OR you could use tm_border to create transparent polygon with border around it
+  tm_shape(voles) +
+  tm_dots(size = 0.3)
+
+ggplot() +
+  geom_sf(data = humboldt) + #you can not say data here but DO just to be careful 
+  geom_sf(data = voles)
+
+#R currently does not have any ideas that voles and humboldt are related, it just knows you are plotting them together
+```
+
+#Geocomputation in R (Robin Lovelace), package that goes along with it that let's you do all of the examples! https://geocompr.robinlovelace.net/index.html#how-to-contribute
+
+Convert vole events and Humboldt polygon to point pattern + window: 
+
+```{r}
+#voles_sp <- as(voles, "Spatial") #converting to spatial point data frame 
+#class(voles_sp) 
+
+#voles_ppp <- as(voles_sp, "ppp")
+#class(voles_sp) 
+
+#Expect answers from Allison and Jessica 
+
+```
+
+## Cluster analysis
+
+### k-means 
+
+```{r}
+iris_nice <- iris %>% #iris just exists in R so no need to call it
+  clean_names()
+
+ggplot(data = iris_nice) +
+  geom_point(aes(x = petal_length,
+                 y = petal_width,
+                 color = species))
+
+# How many clusterd do YOU (R) think there should be for this dataset? 
+
+# R will test different algorythms to see what could be a good option
+
+# NbClust was built specifically to determine how many clusters there should be having no pior knowledge, you can also give it a method of clustering, in this case, k-means 
+
+number_est <- NbClust(iris_nice[1:4],
+                      min.nc = 2,
+                      max.nc = 10,
+                      method = "kmeans") #when you see [ ], that's getting into baseR
+# When you run this, look in the console and it will tell you "* According to the majority rule, the best number of clusters is  2 " - which almost makes sense based on looking at the iris data (on the graphs, the Dindex is the number of algorythms picked the number of clusters) HOWEVER, we know that there should be 3 because of our ggplot and thinking about the data...about 65% of the algorhythms said 3 (according to the Dindex)
+
+# Do k-means: 
+iris_km <- kmeans(iris_nice[1:4], 3) #columns 1 through 4 and number of clusters is 3, this produces a list with is vectors that don't have to have the same length or etc. BUT, the size row tells you that there are 33, 21 and 96 observations in each of the group
+
+#iris_km
+
+# Now bind the cluster number together with the original data: 
+iris_cl <- data.frame(iris_nice, cluster_no = factor(iris_km$cluster)) #tell it that you want it as a factor because you don't care about the number just the grouping, could also use as.factor, does the same thing
+
+#Plot my different clusters:
+
+ggplot(data = iris_cl) +
+  geom_point(aes(x = sepal_length, y = sepal_width, color = cluster_no))
+```
+
+
+```{r}
+##3D Plot
+
+plot_ly(x = iris_cl$petal_length,
+        y = iris_cl$petal_width,
+        z = iris_cl$sepal_width,
+        type = "scatter3d",
+        color = iris_cl$cluster_no)
+```
+
+
+### Hierarchical cluster analysis
+
+- 'stats::hclust()' - agglomerative hierarchical clustering
+- 'cluster::diana()' - divisive hierarchical clustering
+
+```{r}
+wb_env <- read_csv(here("data", "wb_env.csv"))
+
+wb_ghg_20 <- wb_env %>% 
+  arrange(-ghg) %>% #arrange in decending order of ghg
+  head(20) #also could use top_n from dplyr (just keeping the first 20 here) 
+
+#Can also use top_frac, keeping the fraction of groups you want 
+
+#Now we want to scale to make sure that we are not waiting everything more than another, scale converts things to a list so we want to automatically convert back to a data frame
+
+wb_scaled <- as.data.frame(scale(wb_ghg_20[3:7])) #but this gets rid of the names so we want to get the names back, so we assign the name vector and the row names
+
+rownames(wb_scaled) <- wb_ghg_20$name # Cool! Now the rownames are the names and they are the identifiers 
+
+# Find distances (create a dissimilarity matrix):
+diss <- dist(wb_scaled, method = "euclidean", upper = TRUE)
+
+#diss #This looks weird because it is now a dendrogram thingy
+
+# Use euclidean distances to do some complete agglomerative clustering:
+
+hc_complete <- hclust(diss, method = "complete")
+
+#Plot it:
+
+plot(hc_complete)
+
+# Analysis for example, United States and China are similar, and they are quite different from the rest of the countries in this dataframe
+
+#Plot in ggplot so it is more customizable
+
+ggdendrogram(hc_complete, 
+            rotate = TRUE) +
+  theme_minimal() +
+  labs(x = "Country") #+
+  #theme_classic() +
+  #scale_y_continuous(expand = c(0,0))
+
+#numbers on x axis are measures of scale of euclydian distances which pretty much mean nothing and you can do much with it (really hard to interperite)
+```
+
+
+#There is a lot more you can do with these, look in the key!
